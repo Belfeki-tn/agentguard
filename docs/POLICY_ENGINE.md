@@ -3,8 +3,9 @@
 Developed and maintained by **Belfeki.tn**.
 
 This milestone implements standalone configuration validation and evaluation.
-The [MCP stdio proxy](MCP_PROXY.md) now consumes this engine. The approval workflow,
-audit storage, dashboard, and simulation CLI are planned. An evaluation never
+The [MCP stdio proxy](MCP_PROXY.md) consumes this engine and implements
+[local approvals](APPROVAL_WORKFLOW.md) and [audit storage](AUDIT_LOGGING.md).
+The dashboard and simulation CLI are planned. A standalone evaluation never
 executes a tool or grants an approval.
 
 ## Public interfaces

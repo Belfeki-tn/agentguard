@@ -17,8 +17,9 @@ Maintainer: **Belfeki.tn**
 - See [MCP proxy scope and limitations](MCP_PROXY.md); broader protocol features remain planned
 
 ## Week 4: Approval and audit
-- Bind approvals to exact call, identity, expiration, one-time use
-- Redacted SQLite audit events
+- Implemented: exact-call approval binding, expiration, atomic single-use consumption
+- Implemented: separate-terminal POSIX approval CLI and metadata-only SQLite audit
+- See [approval workflow](APPROVAL_WORKFLOW.md) and [audit logging](AUDIT_LOGGING.md)
 
 ## Week 5: Developer experience
 - CLI, dry-run policy simulator, docs, examples

@@ -12,7 +12,7 @@ It does not relay arbitrary JSON-RPC messages.
 
 ```text
 MCP client → AgentGuard SDK server → GuardedTools → policy engine
-                                      ↓ allow only
+                                      ↓ allow / consumed approval
                               SDK client session → upstream subprocess
 ```
 
@@ -20,6 +20,9 @@ MCP client → AgentGuard SDK server → GuardedTools → policy engine
 transport adapter, trusted operator settings, startup discovery, and the guarded
 invocation handler. `agentguard.cli` validates inputs before launching the proxy
 and reports sanitized diagnostics on stderr.
+`agentguard.approvals` adds live single-use coordination and private FIFO previews;
+`agentguard.storage` supplies atomic approval transitions and metadata-only audit.
+The policy package does not depend on either module.
 
 Startup validates the policy and executable, launches the upstream without a
 shell, performs the SDK initialization handshake, and reads every tool catalogue
@@ -77,11 +80,19 @@ exit with code 2 before launching the subprocess; startup/protocol failures exit
 with code 1. Ctrl-C exits with code 130. Diagnostics never include the command's
 arguments, raw requests, configuration contents, or exception traces.
 
+The proxy now requires private local SQLite storage, defaulting to
+`~/.local/state/agentguard` (`--state-dir` overrides it). Approval lifetime is
+configured separately with `--approval-timeout`, default 60 seconds. Storage is
+validated before upstream launch. See [APPROVAL_WORKFLOW.md](APPROVAL_WORKFLOW.md)
+for POSIX permission requirements and the separate-terminal operator commands.
+
 ## Decisions and failure behavior
 
 - `allow`: a discovered tool is invoked once through the SDK client.
 - `deny`: returns an MCP tool error, with no upstream invocation.
-- `approve`: returns an approval-required tool error, with no upstream invocation.
+- `approve`: waits for an explicit local decision and executes only after atomic
+  consumption of an exact-call approval. Rejected, expired, and cancelled requests
+  return an approval-required error without executing upstream.
 - Unknown or invalid identities, unsupported tasks/resumptions, and enforcement
   exceptions are rejected. Unknown tools remain blocked even if a policy allows
   their names.
@@ -89,12 +100,12 @@ arguments, raw requests, configuration contents, or exception traces.
 Errors use `CallToolResult.is_error` and structured content, for example the wire
 form `{"agentguard": {"code": "approval_required"}}` inside `structuredContent`.
 Other codes include `denied`, `unknown_tool`, `enforcement_error`,
-`unsupported_request`, `upstream_error`, and `upstream_unavailable`. Policy
+`unsupported_request`, `upstream_error`, `upstream_unavailable`, and `audit_error`. Policy
 explanations and sensitive arguments are not included in errors.
 
 Client metadata is not forwarded. Task and interactive resumption parameters are
-rejected; sampling, elicitation, roots, progress bridging, and human approval are
-not implemented. The upstream SDK client offers no arbitrary downstream callback
+rejected; sampling, elicitation, roots, and progress bridging are not implemented.
+Human approval uses a separate local channel. The upstream SDK client offers no arbitrary downstream callback
 path. Normal allowed tool results, including upstream tool error results, are
 returned to the client. Protocol/transport exceptions are sanitized.
 
@@ -120,8 +131,9 @@ agentguard proxy --config examples/proxy-policy.yaml \
 ```
 
 The host can list `echo` and call it with `{"message": "hello"}`. The example
-policy permits only `upstream.echo`. Changing that rule's action to `deny` or
-`approve` rejects the call; restart the proxy after changing configuration.
+policy permits only `upstream.echo`. Changing that rule's action to `deny` rejects
+the call; changing it to `approve` waits for local review. Restart after changing
+configuration. `examples/approval-policy.yaml` provides the approval variant.
 
 For a reproducible SDK-client demonstration, run this Python code from the root:
 
@@ -171,11 +183,14 @@ inspect arguments or validate the safety of returned content.
 Stdout is exclusively the SDK protocol channel. Upstream stderr is discarded
 and SDK payload diagnostics are suppressed to avoid logging secrets. Allowed
 tool content still reaches the client unchanged and may itself contain sensitive
-data. There is no audit database or persistent request logging in this milestone.
+data. Persistent audit contains metadata only, never arguments or tool results;
+see [AUDIT_LOGGING.md](AUDIT_LOGGING.md). Live operator previews deliberately show
+exact arguments and must be kept out of shared logs. Approval authorization trusts
+the effective OS user; same-UID agents/processes are inside that boundary.
 
 This is an early implementation, not a production security assurance. HTTP/SSE
 gateway transports, multiple upstreams, live reload, dashboard, cloud services,
-and approval workflows are outside this milestone.
+and cross-account approval delegation are outside this milestone.
 
 ## Tests
 

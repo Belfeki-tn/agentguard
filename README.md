@@ -4,7 +4,7 @@
 
 Developed and maintained by **Belfeki.tn**.
 
-> Status: deterministic policy engine and single-upstream MCP stdio tool proxy implemented. Approval workflows are not implemented. Do not rely on this early project for production security.
+> Status: policy engine, MCP stdio proxy, local POSIX approvals, and metadata-only SQLite audit implemented. Do not rely on this early project for production security.
 
 AgentGuard aims to provide a local-first MCP gateway with deterministic allow/deny/approve policies, human approval, redacted audit logs, and policy simulation.
 
@@ -25,6 +25,7 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e '.[dev]'
 pytest
 ruff check .
+ruff format --check .
 agentguard --help
 ```
 
@@ -54,8 +55,15 @@ decision = evaluate(policy, "filesystem.read_file")
 print(decision.model_dump(mode="json"))
 ```
 
-The proxy blocks `approve` calls with an approval-required result; approval collection
-and approval-based execution are planned.
+The proxy waits for an explicit local decision on `approve` calls. Review requests
+from a separate trusted terminal using `agentguard approvals list`,
+`agentguard approvals show <request-id>`, and `agentguard approvals approve <request-id>`
+or `reject <request-id>`. Approvals expire and can be consumed only once.
+See [the approval workflow](docs/APPROVAL_WORKFLOW.md) for a working example and
+the same-UID trust boundary, and [audit logging](docs/AUDIT_LOGGING.md) for storage,
+privacy, and uncertain execution outcomes. State defaults to `~/.local/state/agentguard`;
+use `--state-dir` for a different private location. POSIX filesystem protection
+and FIFOs are required for this release.
 
 ## Security boundary
 The gateway only controls tool calls actually routed through it. It is not a sandbox, a substitute for least-privilege credentials, or a guarantee against compromised upstream servers. Only stdio transport is implemented.

@@ -4,6 +4,7 @@ Only tools/list and guarded tools/call are exposed. Policy evaluation remains
 independent of this transport layer. There is no generic forwarding path.
 """
 
+import json
 import logging
 import math
 import os
@@ -11,6 +12,7 @@ import re
 import shlex
 import shutil
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -23,8 +25,10 @@ from mcp.server.stdio import stdio_server
 from pydantic import TypeAdapter
 
 from agentguard import __version__
+from agentguard.approvals import ApprovalCoordinator, canonical_arguments
 from agentguard.policy import Policy, evaluate
 from agentguard.policy.models import ToolName
+from agentguard.storage import StateStore, new_request_id
 
 _QUALIFIED_TOOL = TypeAdapter(ToolName)
 
@@ -44,6 +48,8 @@ class ProxySettings:
     command: tuple[str, ...]
     server_id: str = "upstream"
     timeout: float = 30.0
+    state_dir: Path | None = None
+    approval_timeout: float = 60.0
 
     def __post_init__(self) -> None:
         if not isinstance(self.server_id, str) or not re.fullmatch(
@@ -69,6 +75,8 @@ class ProxySettings:
             or self.timeout <= 0
         ):
             raise ProxyConfigurationError("Timeout must be finite and positive.")
+        if not math.isfinite(self.approval_timeout) or self.approval_timeout <= 0:
+            raise ProxyConfigurationError("Approval timeout must be finite and positive.")
 
 
 def parse_command(source: str) -> tuple[str, ...]:
@@ -86,8 +94,12 @@ def parse_command(source: str) -> tuple[str, ...]:
     return command
 
 
+class _GatewayError(types.CallToolResult):
+    """Internal marker so untrusted upstream content cannot impersonate audit outcomes."""
+
+
 def _error(code: str, message: str) -> types.CallToolResult:
-    return types.CallToolResult(
+    return _GatewayError(
         is_error=True,
         content=[types.TextContent(text=message)],
         structured_content={"agentguard": {"code": code}},
@@ -108,12 +120,17 @@ class GuardedTools:
         settings: ProxySettings,
         session: ClientSession,
         tools: list[types.Tool],
+        store: StateStore | None = None,
+        approvals: ApprovalCoordinator | None = None,
     ) -> None:
         self._policy = policy
         self._settings = settings
         self._session = session
         self._tools = {tool.name: tool.model_copy(deep=True) for tool in tools}
         self._available = True
+        self._store = store
+        self._approvals = approvals
+        self._session_id = approvals.session_id if approvals else new_request_id()
 
     async def list_tools(
         self,
@@ -128,19 +145,66 @@ class GuardedTools:
         ctx: ServerRequestContext[Any],
         params: types.CallToolRequestParams,
     ) -> types.CallToolResult:
-        """Evaluate every invocation, refusing non-allow decisions before upstream I/O."""
+        """Audit every handled call and fail closed on storage or approval failures."""
+        request_id = new_request_id()
         try:
-            qualified = _QUALIFIED_TOOL.validate_python(f"{self._settings.server_id}.{params.name}")
+            try:
+                tool = _QUALIFIED_TOOL.validate_python(f"{self._settings.server_id}.{params.name}")
+            except ValueError:
+                tool = "<invalid>"
+            if self._store:
+                self._store.start(request_id, self._session_id, self._settings.server_id, tool)
+            result = await self._call_tool(ctx, params, request_id)
+            if self._store:
+                outcome = "tool_error" if result.is_error else "success"
+                if isinstance(result, _GatewayError):
+                    outcome = result.structured_content["agentguard"]["code"]
+                self._store.finish(request_id, outcome)
+            return result
+        except anyio.get_cancelled_exc_class():
+            self._available = False
+            if self._store:
+                try:
+                    self._store.cancel(request_id)
+                    self._store.finish(request_id, "cancelled_outcome_unknown")
+                except Exception:  # noqa: BLE001, S110 - preserve cancellation, never log secrets.
+                    pass
+            raise
+        except Exception:  # noqa: BLE001 - storage/coordination boundary must fail closed.
+            self._available = False
+            if self._store:
+                try:
+                    self._store.cancel(request_id)
+                except Exception:  # noqa: BLE001, S110 - broken store; return sanitized error below.
+                    pass
+            return _error(
+                "audit_error",
+                "Approval or audit storage failed. Execution may have occurred; "
+                "no retry was attempted.",
+            )
+
+    async def _call_tool(
+        self,
+        ctx: ServerRequestContext[Any],
+        params: types.CallToolRequestParams,
+        request_id: str,
+    ) -> types.CallToolResult:
+        """Keep evaluation, approval consumption, and submission on one guarded path."""
+        tool_name = params.name
+        try:
+            qualified = _QUALIFIED_TOOL.validate_python(f"{self._settings.server_id}.{tool_name}")
             decision = evaluate(self._policy, qualified)
+            if self._store:
+                self._store.policy(
+                    request_id,
+                    decision.action,
+                    decision.matched_rule.id if decision.matched_rule else None,
+                )
             if decision.action == "deny":
                 return _error("denied", "Tool call denied by policy.")
-            if decision.action == "approve":
-                return _error(
-                    "approval_required", "Approval required; approvals are not implemented."
-                )
-            if decision.action != "allow":
+            if decision.action not in ("allow", "approve"):
                 return _error("enforcement_error", "Policy enforcement failed; call refused.")
-            if params.name not in self._tools:
+            if tool_name not in self._tools:
                 return _error("unknown_tool", "Unknown tool; call refused.")
             # Do not forward task execution, resumptions, client identity, or metadata.
             if (
@@ -152,14 +216,39 @@ class GuardedTools:
         except Exception:  # noqa: BLE001 - any enforcement failure must refuse execution.
             return _error("enforcement_error", "Policy enforcement failed; call refused.")
 
+        arguments = params.arguments
+        if not self._available:
+            return _error("upstream_unavailable", "Upstream session unavailable; call refused.")
+        if decision.action == "approve":
+            if self._approvals is None:
+                return _error(
+                    "approval_required", "Approval required; approval service unavailable."
+                )
+            canonical = canonical_arguments(arguments)
+            arguments = json.loads(canonical)
+            context = json.dumps([self._session_id, getattr(ctx, "request_id", None), request_id])
+            request = self._approvals.request(
+                request_id,
+                self._settings.server_id,
+                qualified,
+                canonical,
+                context,
+                decision.matched_rule.id if decision.matched_rule else None,
+            )
+            if not await self._approvals.wait(request):
+                return _error("approval_required", "Approval was rejected, expired, or cancelled.")
+
         try:
             # A pending cancellation must be observed before submitting any side effect.
             await anyio.lowlevel.checkpoint()
             # Recheck after yielding: another concurrent call may have tainted the session.
             if not self._available:
                 return _error("upstream_unavailable", "Upstream session unavailable; call refused.")
+            # Approval consumption already committed intent in its atomic transaction.
+            if self._store and decision.action == "allow":
+                self._store.finish(request_id, "execution_started")
             with anyio.fail_after(self._settings.timeout):
-                result = await self._session.call_tool(params.name, params.arguments)
+                result = await self._session.call_tool(tool_name, arguments)
             if not isinstance(result, types.CallToolResult):
                 raise TypeError("Unsupported upstream result")
             return result
@@ -214,6 +303,8 @@ async def run_proxy(policy: Policy, settings: ProxySettings) -> None:
     """
     policy = Policy.model_validate(policy.model_dump(mode="python"))
     configure_safe_logging()
+    store = StateStore(settings.state_dir or Path.home() / ".local/state/agentguard")
+    approvals = ApprovalCoordinator(store, new_request_id(), settings.approval_timeout)
     parameters = StdioServerParameters(command=settings.command[0], args=list(settings.command[1:]))
     # The SDK requires a synchronous file descriptor for subprocess stderr.
     with open(os.devnull, "w", encoding="utf-8") as errlog:  # noqa: ASYNC230
@@ -224,7 +315,7 @@ async def run_proxy(policy: Policy, settings: ProxySettings) -> None:
             with anyio.fail_after(settings.timeout):
                 await session.initialize()
                 tools = await discover_tools(session, settings.server_id)
-            guarded = GuardedTools(policy, settings, session, tools)
+            guarded = GuardedTools(policy, settings, session, tools, store, approvals)
             server = Server(
                 "AgentGuard",
                 version=__version__,
@@ -232,8 +323,11 @@ async def run_proxy(policy: Policy, settings: ProxySettings) -> None:
                 on_call_tool=guarded.call_tool,
             )
             async with stdio_server() as (downstream_read, downstream_write):
-                await server.run(
-                    downstream_read,
-                    downstream_write,
-                    server.create_initialization_options(),
-                )
+                try:
+                    await server.run(
+                        downstream_read,
+                        downstream_write,
+                        server.create_initialization_options(),
+                    )
+                finally:
+                    store.cancel_session(approvals.session_id)

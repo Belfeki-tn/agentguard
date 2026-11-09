@@ -1,0 +1,8 @@
+# Developed and maintained by Belfeki.tn.
+version: 1
+defaults:
+  action: deny
+rules:
+  - id: review-demo-echo
+    tools: ["upstream.echo"]
+    action: approve

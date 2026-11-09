@@ -52,7 +52,13 @@ def write_policy(path, server_id="trusted"):
 
 @asynccontextmanager
 async def connected(
-    tmp_path, *, server_id="trusted", policy_id="trusted", timeout=5, mode="normal"
+    tmp_path,
+    *,
+    server_id="trusted",
+    policy_id="trusted",
+    timeout=5,
+    mode="normal",
+    approval_timeout=0.15,
 ):
     config = tmp_path / "policy.yaml"
     counter = tmp_path / "calls.txt"
@@ -72,6 +78,10 @@ async def connected(
             server_id,
             "--timeout",
             str(timeout),
+            "--state-dir",
+            str(tmp_path / "state"),
+            "--approval-timeout",
+            str(approval_timeout),
         ],
     )
     with (tmp_path / "diagnostics.txt").open("w", encoding="utf-8") as diagnostics:
@@ -366,6 +376,8 @@ async def test_documented_demo_server(tmp_path):
             "proxy",
             "--config",
             str(root / "examples/proxy-policy.yaml"),
+            "--state-dir",
+            str(tmp_path / "state"),
             "--stdio-command",
             shlex.join([sys.executable, str(root / "examples/demo_server.py")]),
         ],
