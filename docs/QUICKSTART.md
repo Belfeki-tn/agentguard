@@ -52,6 +52,15 @@ initialize an upstream, execute a tool, initialize your audit database, or expir
 approvals. Success is a local preflight, not a guarantee of MCP compatibility.
 The default state location is `~/.local/state/agentguard`; doctor does not create it.
 
+Executable checks follow symlinks to an executable regular file. Group/world-writable
+executables fail, except when the resolved file is the same interpreter already
+running AgentGuard. Hosted toolcaches and macOS framework installers can give Python
+these permissions. Reusing that interpreter passes with an explicit warning;
+file identity, not its name, directory prefix, or a CI environment flag, determines
+this narrow exception. Use a private Python installation on shared hosts. Doctor
+does not certify executable provenance, directory-chain safety, ACLs, or protection
+against replacement after the check. Proxy policy/approval enforcement is unchanged.
+
 Policy simulation is offline. It prints the qualified tool, action, matched rule
 ID (or null), and explanation. `--json` emits one JSON object. Simulation exits 0
 for every valid decision, including deny/approve, and 2 for invalid policy/tool

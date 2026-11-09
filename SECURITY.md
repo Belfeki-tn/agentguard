@@ -48,6 +48,12 @@ passing doctor is not a claim of end-to-end compatibility or safety. Diagnostics
 omit command arguments, policy contents, and raw exception details. Do not weaken
 permissions or turn on payload logging to work around sanitized errors.
 
+Doctor treats its already-running Python interpreter as an existing trust choice:
+group/world-writable aliases of that same file pass with a warning, while writable
+unrelated executables fail. This uses file identity, not a CI-specific exemption.
+Use a private Python installation on shared hosts; this diagnostic does not prove
+binary provenance or prevent filesystem replacement after inspection.
+
 ## Current scope and testing
 
 Full gateway CI targets Linux and macOS with Python 3.11–3.14 and POSIX ownership,

@@ -27,3 +27,10 @@ release is implied by this changelog.
   dashboard, cloud service, sandbox, or cross-account approval broker.
 - Same-UID processes are trusted; audit is local, unencrypted, and not tamper-proof.
 - Only routed calls are governed; cancellation cannot undo submitted side effects.
+
+### Fixed
+
+- Doctor accepts group/world-writable aliases of its already-running Python
+  interpreter with a permission warning, fixing hosted toolcache/framework
+  preflight failures. Writable unrelated executables remain rejected; executable
+  regular-file validation also rejects executable-mode FIFOs.

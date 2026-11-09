@@ -151,11 +151,25 @@ def diagnose(
     try:
         settings = ProxySettings(parse_command(command), server_id)
         executable = shutil.which(settings.command[0])
-        if executable is None or Path(executable).resolve().stat().st_mode & 0o022:
-            raise StateError("Unsafe upstream executable.")
-        results.append(
-            Diagnostic("upstream", True, "Upstream executable is available; it was not launched.")
-        )
+        if executable is None:
+            raise StateError("Upstream executable is unavailable.")
+        resolved = Path(executable).resolve(strict=True)
+        info = resolved.stat()
+        if not stat.S_ISREG(info.st_mode) or not os.access(resolved, os.X_OK):
+            raise StateError("Upstream must be an executable regular file.")
+        message = "Upstream executable is available; it was not launched."
+        if info.st_mode & 0o022:
+            # Toolcache/framework Python installs can be writable. Reusing the
+            # interpreter already running this process introduces no new binary
+            # trust choice; compare file identity, never names or CI variables.
+            if not resolved.samefile(sys.executable):
+                raise StateError("Unsafe upstream executable.")
+            message = (
+                "Warning: the current Python interpreter is group/world writable. "
+                "Reusing the already-running interpreter; nothing was launched. "
+                "Use a private Python installation on shared hosts."
+            )
+        results.append(Diagnostic("upstream", True, message))
     except Exception:  # noqa: BLE001 - command arguments can contain credentials.
         results.append(
             Diagnostic(

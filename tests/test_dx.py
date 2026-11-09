@@ -2,6 +2,9 @@
 
 import json
 import os
+import shlex
+import shutil
+import stat
 import sys
 from pathlib import Path
 
@@ -52,6 +55,110 @@ def test_doctor_does_not_change_existing_audit_or_expire_approvals(tmp_path):
     assert result.exit_code == 0, result.output
     assert store.path.read_bytes() == before
     assert sorted(path.name for path in store.directory.iterdir()) == ["audit.sqlite3"]
+
+
+@pytest.mark.parametrize("mode", [0o755, 0o775, 0o777])
+@pytest.mark.parametrize("alias", [False, True])
+def test_doctor_reuses_current_interpreter_with_hosted_permissions(
+    tmp_path, monkeypatch, mode, alias
+):
+    # Real files reproduce framework/toolcache modes; never chmod the real host Python.
+    binary = tmp_path / "python runtime"
+    shutil.copyfile(Path(sys.executable).resolve(), binary)
+    binary.chmod(mode)
+    command_path = tmp_path / "python-link" if alias else binary
+    if alias:
+        command_path.symlink_to(binary)
+        assert command_path.is_symlink()
+    monkeypatch.setattr(sys, "executable", str(binary))
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Doctor launched an upstream")
+
+    monkeypatch.setattr("agentguard.proxy.stdio_client", forbidden)
+    monkeypatch.setattr("agentguard.cli.run_proxy", forbidden)
+    result = CliRunner().invoke(
+        app, [*doctor_args(tmp_path, shlex.quote(str(command_path))), "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    upstream = next(
+        check for check in json.loads(result.stdout)["checks"] if check["check"] == "upstream"
+    )
+    assert upstream["ok"] is True
+    assert ("Warning" in upstream["message"]) == bool(mode & 0o022)
+
+
+@pytest.mark.parametrize("mode", [0o755, 0o775, 0o777, 0o644])
+@pytest.mark.parametrize("alias", [False, True])
+def test_doctor_checks_unrelated_executable_target_permissions(tmp_path, mode, alias):
+    binary = tmp_path / "unrelated-python"
+    binary.write_text("#!/bin/sh\nexit 97\n")
+    binary.chmod(mode)
+    command_path = tmp_path / "alias" if alias else binary
+    if alias:
+        command_path.symlink_to(binary)
+    assert stat.S_IMODE(binary.stat().st_mode) == mode
+    result = CliRunner().invoke(
+        app, [*doctor_args(tmp_path, shlex.quote(str(command_path))), "--json"]
+    )
+    upstream = next(
+        check for check in json.loads(result.stdout)["checks"] if check["check"] == "upstream"
+    )
+    assert upstream["ok"] is (mode == 0o755)
+    assert result.exit_code == (0 if mode == 0o755 else 1)
+
+
+@pytest.mark.parametrize("kind", ["broken_link", "link_loop", "directory", "fifo"])
+def test_doctor_rejects_invalid_executable_paths(tmp_path, kind):
+    path = tmp_path / "unsafe-command"
+    if kind == "broken_link":
+        path.symlink_to(tmp_path / "missing")
+    elif kind == "link_loop":
+        path.symlink_to(path)
+    elif kind == "directory":
+        path.mkdir(mode=0o755)
+    else:
+        os.mkfifo(path, 0o700)
+    result = CliRunner().invoke(app, [*doctor_args(tmp_path, shlex.quote(str(path))), "--json"])
+    upstream = next(
+        check for check in json.loads(result.stdout)["checks"] if check["check"] == "upstream"
+    )
+    assert not upstream["ok"]
+    assert result.exit_code == 1
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "missing-agentguard-executable SECRET",
+        '"unterminated SECRET',
+        "python | cat SECRET",
+        "python\x00SECRET",
+    ],
+)
+def test_doctor_invalid_commands_remain_sanitized(tmp_path, command):
+    result = CliRunner().invoke(app, [*doctor_args(tmp_path, command), "--json"])
+    assert result.exit_code == 1
+    upstream = next(
+        check for check in json.loads(result.stdout)["checks"] if check["check"] == "upstream"
+    )
+    assert not upstream["ok"]
+    assert "SECRET" not in result.output
+
+
+def test_doctor_identity_check_exception_is_sanitized(tmp_path, monkeypatch):
+    binary = tmp_path / "credential-in-filename"
+    binary.write_text("not-executed")
+    binary.chmod(0o775)
+
+    def broken(*args):
+        raise PermissionError("credential-in-exception")
+
+    monkeypatch.setattr(Path, "samefile", broken)
+    result = CliRunner().invoke(app, [*doctor_args(tmp_path, shlex.quote(str(binary))), "--json"])
+    assert result.exit_code == 1
+    assert "credential-in-filename" not in result.output
+    assert "credential-in-exception" not in result.output
 
 
 @pytest.mark.parametrize(
