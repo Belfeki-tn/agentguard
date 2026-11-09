@@ -1,3 +1,3 @@
-"""AgentGuard: early-stage scaffold. No MCP enforcement is implemented."""
+"""AgentGuard: local-first MCP permission gateway, developed by Belfeki.tn."""
 
 __version__ = "0.0.1"

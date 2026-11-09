@@ -4,7 +4,7 @@
 
 Developed and maintained by **Belfeki.tn**.
 
-> Status: standalone policy engine implemented. The MCP proxy and enforcement are **not implemented yet**. Do not rely on this project for production security.
+> Status: deterministic policy engine and single-upstream MCP stdio tool proxy implemented. Approval workflows are not implemented. Do not rely on this early project for production security.
 
 AgentGuard aims to provide a local-first MCP gateway with deterministic allow/deny/approve policies, human approval, redacted audit logs, and policy simulation.
 
@@ -28,7 +28,15 @@ ruff check .
 agentguard --help
 ```
 
-The current CLI is a scaffold and does not proxy or secure MCP calls.
+Launch a trusted MCP server behind the proxy:
+
+```bash
+agentguard proxy --config examples/proxy-policy.yaml \
+  --stdio-command "python examples/demo_server.py"
+```
+
+Configure your MCP host to launch this command. See [MCP_PROXY.md](docs/MCP_PROXY.md)
+for a working SDK client example, server identities, failure behavior, and limitations.
 
 ## Configuration
 See `examples/agentguard.yaml` and [the policy engine guide](docs/POLICY_ENGINE.md).
@@ -46,10 +54,11 @@ decision = evaluate(policy, "filesystem.read_file")
 print(decision.model_dump(mode="json"))
 ```
 
-`approve` is a decision only; approval collection and enforcement are planned.
+The proxy blocks `approve` calls with an approval-required result; approval collection
+and approval-based execution are planned.
 
 ## Security boundary
-The future gateway will only control tool calls actually routed through it. It is not a sandbox, a substitute for least-privilege credentials, or a guarantee against compromised upstream servers. Do not expose a proxy to untrusted networks by default.
+The gateway only controls tool calls actually routed through it. It is not a sandbox, a substitute for least-privilege credentials, or a guarantee against compromised upstream servers. Only stdio transport is implemented.
 
 ## Community
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

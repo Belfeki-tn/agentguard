@@ -12,8 +12,9 @@ Maintainer: **Belfeki.tn**
 - See [policy engine architecture and semantics](POLICY_ENGINE.md)
 
 ## Week 3: MCP proxy
-- stdio client/server bridge; intercept tools/call
-- Preserve upstream protocol behavior; test bypass assumptions
+- Implemented: single-upstream SDK stdio adapter; intercept every tools/call
+- Implemented: discovery, policy enforcement, failure/cancellation and counter-based tests
+- See [MCP proxy scope and limitations](MCP_PROXY.md); broader protocol features remain planned
 
 ## Week 4: Approval and audit
 - Bind approvals to exact call, identity, expiration, one-time use
