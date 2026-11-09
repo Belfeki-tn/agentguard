@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentguard-mcp"
+version = "0.0.1"
+description = "Local-first MCP tool permission gateway (early scaffold)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{name = "Belfeki.tn"}]
+keywords = ["mcp", "security", "ai-agents", "permissions"]
+dependencies = ["typer>=0.12,<1", "rich>=13,<15", "pydantic>=2,<3", "PyYAML>=6,<7"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.7,<1", "hypothesis>=6,<7"]
+
+[project.scripts]
+agentguard = "agentguard.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentguard"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100

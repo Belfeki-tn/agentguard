@@ -1,0 +1,14 @@
+# Proposed v0.1 policy format; parser and enforcement are not yet implemented.
+version: 1
+defaults:
+  action: deny
+rules:
+  - id: allow-read
+    tools: ["filesystem.read_file"]
+    action: allow
+  - id: review-production-deploy
+    tools: ["deploy.production"]
+    action: approve
+  - id: block-database-drop
+    tools: ["database.drop"]
+    action: deny
