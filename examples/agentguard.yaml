@@ -1,4 +1,5 @@
-# Proposed v0.1 policy format; parser and enforcement are not yet implemented.
+# Version 1 policy. Standalone parsing/evaluation is implemented; MCP enforcement is planned.
+# Exact server.tool matching; deny > approve > allow, first rule wins ties.
 version: 1
 defaults:
   action: deny

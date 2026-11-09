@@ -4,7 +4,7 @@
 
 Developed and maintained by **Belfeki.tn**.
 
-> Status: early-stage scaffold. The MCP proxy and enforcement are **not implemented yet**. Do not rely on this project for production security.
+> Status: standalone policy engine implemented. The MCP proxy and enforcement are **not implemented yet**. Do not rely on this project for production security.
 
 AgentGuard aims to provide a local-first MCP gateway with deterministic allow/deny/approve policies, human approval, redacted audit logs, and policy simulation.
 
@@ -24,13 +24,29 @@ python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e '.[dev]'
 pytest
+ruff check .
 agentguard --help
 ```
 
 The current CLI is a scaffold and does not proxy or secure MCP calls.
 
 ## Configuration
-See `examples/agentguard.yaml`. The sample format is provisional.
+See `examples/agentguard.yaml` and [the policy engine guide](docs/POLICY_ENGINE.md).
+Version 1 policies support exact server-qualified tool names and `allow`, `deny`,
+and `approve` (approval required). Unmatched tools are denied. Conflicting rules
+use `deny > approve > allow`; the first rule wins ties. Invalid configuration is rejected.
+
+The standalone Python API evaluates policies without executing tools:
+
+```python
+from agentguard.policy import evaluate, load_policy
+
+policy = load_policy("examples/agentguard.yaml")
+decision = evaluate(policy, "filesystem.read_file")
+print(decision.model_dump(mode="json"))
+```
+
+`approve` is a decision only; approval collection and enforcement are planned.
 
 ## Security boundary
 The future gateway will only control tool calls actually routed through it. It is not a sandbox, a substitute for least-privilege credentials, or a guarantee against compromised upstream servers. Do not expose a proxy to untrusted networks by default.

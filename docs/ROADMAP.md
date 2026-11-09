@@ -7,8 +7,9 @@ Maintainer: **Belfeki.tn**
 - Confirm project, package, and trademark naming availability
 
 ## Week 2: Policy engine
-- Typed policy schema, deterministic matching, deny-by-default
-- Reject unknown keys and invalid configurations
+- Implemented: typed policy schema, deterministic matching, deny-by-default
+- Implemented: reject unknown keys and invalid configurations
+- See [policy engine architecture and semantics](POLICY_ENGINE.md)
 
 ## Week 3: MCP proxy
 - stdio client/server bridge; intercept tools/call
