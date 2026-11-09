@@ -1,6 +1,7 @@
 """AgentGuard command line interface. Developed and maintained by Belfeki.tn."""
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated
 
@@ -8,7 +9,8 @@ import anyio
 import typer
 
 from agentguard.approvals import live_preview
-from agentguard.policy import load_policy
+from agentguard.diagnostics import diagnose
+from agentguard.policy import evaluate, load_policy
 from agentguard.proxy import ProxySettings, parse_command, run_proxy
 from agentguard.storage import StateStore
 
@@ -21,6 +23,64 @@ app = typer.Typer(
 def status() -> None:
     """Show implementation status."""
     typer.echo("AgentGuard by Belfeki.tn — stdio enforcement, local approvals, SQLite audit.")
+
+
+@app.command()
+def doctor(
+    config: Annotated[Path, typer.Option("--config", help="Policy YAML to inspect.")],
+    stdio_command: Annotated[
+        str, typer.Option("--stdio-command", help="Upstream command to check only.")
+    ],
+    state_dir: Annotated[Path, typer.Option("--state-dir")] = Path("~/.local/state/agentguard"),
+    server_id: str = typer.Option("upstream", "--server-id"),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable diagnostics."),
+) -> None:
+    """Check local prerequisites without launching an upstream or calling tools."""
+    checks = diagnose(config, stdio_command, state_dir, server_id)
+    ok = all(check.ok for check in checks)
+    if json_output:
+        typer.echo(json.dumps({"ok": ok, "checks": [asdict(check) for check in checks]}))
+    else:
+        for check in checks:
+            typer.echo(f"{'PASS' if check.ok else 'FAIL'} {check.check}: {check.message}")
+        typer.echo("Preflight only: no upstream process or MCP tool was executed.")
+    if not ok:
+        raise typer.Exit(1)
+
+
+policy_app = typer.Typer(help="Inspect deterministic policy decisions without executing tools.")
+app.add_typer(policy_app, name="policy")
+
+
+@policy_app.command("test")
+def policy_test(
+    config: Annotated[Path, typer.Option("--config", help="Policy YAML file.")],
+    tool: Annotated[str, typer.Option("--tool", help="Exact server-qualified tool name.")],
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable decision."),
+) -> None:
+    """Simulate allow, deny, or approve using the existing pure policy engine."""
+    try:
+        decision = evaluate(load_policy(config), tool)
+    except Exception:  # noqa: BLE001 - invalid configuration must not expose policy contents.
+        if json_output:
+            typer.echo(json.dumps({"error": "invalid_policy_or_tool"}))
+        else:
+            typer.echo("Invalid policy or tool name; check docs/POLICY_ENGINE.md.", err=True)
+        raise typer.Exit(2) from None
+    payload = {
+        "tool": tool,
+        "action": decision.action,
+        "matched_rule": decision.matched_rule.id if decision.matched_rule else None,
+        "explanation": decision.explanation,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=True))
+    else:
+        typer.echo(
+            f"Tool: {tool}\nDecision: {decision.action}\n"
+            f"Matched rule: {payload['matched_rule'] or '(none)'}\n"
+            f"Explanation: {decision.explanation}"
+        )
 
 
 @app.command()

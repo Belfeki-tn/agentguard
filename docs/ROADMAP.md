@@ -22,7 +22,9 @@ Maintainer: **Belfeki.tn**
 - See [approval workflow](APPROVAL_WORKFLOW.md) and [audit logging](AUDIT_LOGGING.md)
 
 ## Week 5: Developer experience
-- CLI, dry-run policy simulator, docs, examples
+- Implemented: no-execution doctor preflight and offline policy simulation with JSON output
+- Implemented: tested SDK quickstart, package/license inspection, clean-install CI jobs
+- See [quickstart](QUICKSTART.md), [release checklist](RELEASE_CHECKLIST.md), and validation reports
 
 ## Week 6: Security hardening
 - Threat modeling, property tests, malformed input tests, concurrency tests

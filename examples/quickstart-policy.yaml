@@ -1,0 +1,14 @@
+# Developed and maintained by Belfeki.tn.
+version: 1
+defaults:
+  action: deny
+rules:
+  - id: allow-echo
+    tools: ["upstream.echo"]
+    action: allow
+  - id: deny-echo
+    tools: ["upstream.blocked_echo"]
+    action: deny
+  - id: review-echo
+    tools: ["upstream.protected_echo"]
+    action: approve

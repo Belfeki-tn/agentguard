@@ -5,8 +5,9 @@ Developed and maintained by **Belfeki.tn**.
 This milestone implements standalone configuration validation and evaluation.
 The [MCP stdio proxy](MCP_PROXY.md) consumes this engine and implements
 [local approvals](APPROVAL_WORKFLOW.md) and [audit storage](AUDIT_LOGGING.md).
-The dashboard and simulation CLI are planned. A standalone evaluation never
-executes a tool or grants an approval.
+The offline `agentguard policy test` CLI now exposes simulation, including JSON
+output; see [QUICKSTART.md](QUICKSTART.md). The dashboard remains unimplemented.
+A standalone evaluation never executes a tool or grants an approval.
 
 ## Public interfaces
 

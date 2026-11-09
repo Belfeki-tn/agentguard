@@ -1,75 +1,138 @@
 # AgentGuard
 
-**The permission firewall for AI agents.**
+**A local permission gateway for MCP tool calls.**
 
-Developed and maintained by **Belfeki.tn**.
+Developed and maintained by **Belfeki.tn**. Apache-2.0.
 
-> Status: policy engine, MCP stdio proxy, local POSIX approvals, and metadata-only SQLite audit implemented. Do not rely on this early project for production security.
+AgentGuard sits between an MCP client and one trusted stdio server. It evaluates
+every handled tool call against deterministic YAML policy, blocks denied calls,
+and waits for a one-time local approval when required. SQLite records metadata
+without storing tool arguments or results.
 
-AgentGuard aims to provide a local-first MCP gateway with deterministic allow/deny/approve policies, human approval, redacted audit logs, and policy simulation.
+> Early implementation, not a production security assurance. Only calls routed
+> through AgentGuard are governed. The gateway is not a sandbox, and same-UID
+> processes are trusted by the approval interface.
 
-## Problem
-AI agents can call powerful tools. Developers need enforceable, inspectable controls before sensitive actions execute.
+## Start here
 
-## Planned v0.1 scope
-- MCP stdio proxy with pre-execution interception
-- YAML rules with deny-by-default behavior
-- Terminal approval tied to exact tool-call arguments
-- Local redacted audit trail
-- Offline policy simulation
+Follow the [five-minute quickstart](docs/QUICKSTART.md) to install from a source
+checkout, run a real SDK client through the proxy, verify allow/deny, approve a
+protected call, and inspect audit metadata. No public PyPI release is assumed.
 
-## Development setup
+Linux/macOS and Python 3.11+ are required for the full gateway. CI targets Python
+3.11–3.14 on both platforms; see the validation report for what was run locally.
+Windows proxy/approval support is not implemented.
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -e '.[dev]'
-pytest
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install .
+cp examples/quickstart-policy.yaml agentguard.yaml
+chmod 600 agentguard.yaml
+agentguard doctor --config agentguard.yaml --stdio-command "python examples/quickstart_server.py"
+agentguard policy test --config agentguard.yaml --tool upstream.echo --json
+python examples/quickstart_client.py --config agentguard.yaml --tool echo
+```
+
+The included SDK host launches AgentGuard as its MCP stdio server. For another
+compatible host, configure it to launch:
+
+```bash
+agentguard proxy --config /absolute/path/to/agentguard.yaml \
+  --stdio-command "/absolute/path/to/.venv/bin/python /absolute/path/to/server.py"
+```
+
+Use only trusted upstream commands and remove direct upstream connections from
+that host. The proxy's stdout is protocol-only; diagnostics go to stderr.
+
+## Architecture and policy
+
+```text
+MCP client → AgentGuard stdio server → guarded tool handler → policy engine
+                                           ↕          ↓ allow / consumed approval
+                                 approvals + audit   SDK client → trusted upstream
+```
+
+The policy engine is pure and independent of MCP. Policies use exact,
+case-sensitive `server.tool` identities. The operator configures the server ID;
+client arguments cannot override it. Unmatched tools are denied. Conflicts use
+`deny > approve > allow`, with the first rule breaking equal-action ties.
+
+```yaml
+version: 1
+defaults:
+  action: deny
+rules:
+  - id: allow-echo
+    tools: ["upstream.echo"]
+    action: allow
+```
+
+The public API remains `parse_policy`, `load_policy`, and `evaluate` from
+`agentguard.policy`. See [policy semantics](docs/POLICY_ENGINE.md) and
+[proxy architecture](docs/MCP_PROXY.md).
+
+## Feature status
+
+| Feature | Status |
+| --- | --- |
+| Strict YAML schema, exact matching, default denial | Implemented |
+| Single-upstream official SDK stdio tool adapter | Implemented |
+| Exact-request approvals with expiration and atomic single use | Implemented, POSIX/same-UID trust boundary |
+| Metadata-only SQLite audit | Implemented, local and unencrypted |
+| Doctor preflight and offline policy simulation, JSON output | Implemented |
+| Dashboard, HTTP gateway, cloud service, multiple upstream orchestration | Not implemented |
+| Sandbox, argument safety analysis, cross-account approval broker | Not implemented |
+
+## Approvals and audit
+
+From a separate trusted terminal:
+
+```bash
+agentguard approvals list
+agentguard approvals show <request-id>
+agentguard approvals approve <request-id>
+# Or: agentguard approvals reject <request-id>
+```
+
+Approvals bind the exact tool, arguments, server, and originating execution
+context. They expire and cannot be reused. No approval input uses MCP stdin.
+The default private state directory is `~/.local/state/agentguard`; use the same
+`--state-dir` across proxy, doctor, and approval commands when overriding it.
+For approvals, the option comes before the subcommand:
+`agentguard approvals --state-dir /private/path list`.
+
+Audit excludes all arguments, credentials, results, and raw exception messages.
+Live `show` output deliberately displays exact arguments to the operator. Protect
+terminal scrollback. Read [approval workflow](docs/APPROVAL_WORKFLOW.md) and
+[audit logging](docs/AUDIT_LOGGING.md) for permissions, lifecycle, and failure behavior.
+
+## Security limits
+
+Upstreams can act during startup and allowed calls; run them with least-privilege
+OS access and credentials. Same-UID agents can access approvals or alter state.
+Cancellation cannot undo submitted side effects, and an interrupted request may
+have an unknown outcome. AgentGuard never retries automatically. SQLite audit is
+not a tamper-proof ledger. Doctor checks local prerequisites without launching
+the upstream; it does not certify MCP compatibility or safe tool behavior.
+
+See [SECURITY.md](SECURITY.md) before routing real tools. Public release remains a
+manual maintainer decision subject to the [release checklist](docs/RELEASE_CHECKLIST.md).
+
+## Develop and contribute
+
+```bash
+python -m pip install -e '.[dev]'
+python -m pytest -v
 ruff check .
 ruff format --check .
-agentguard --help
+python -m pip check
+git diff --check
+python -m hatchling build
+python scripts/check_artifacts.py dist
 ```
 
-Launch a trusted MCP server behind the proxy:
+See [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md),
+[roadmap](docs/ROADMAP.md), and the [Milestone 4 validation report](docs/MILESTONE_4_VALIDATION.md).
 
-```bash
-agentguard proxy --config examples/proxy-policy.yaml \
-  --stdio-command "python examples/demo_server.py"
-```
-
-Configure your MCP host to launch this command. See [MCP_PROXY.md](docs/MCP_PROXY.md)
-for a working SDK client example, server identities, failure behavior, and limitations.
-
-## Configuration
-See `examples/agentguard.yaml` and [the policy engine guide](docs/POLICY_ENGINE.md).
-Version 1 policies support exact server-qualified tool names and `allow`, `deny`,
-and `approve` (approval required). Unmatched tools are denied. Conflicting rules
-use `deny > approve > allow`; the first rule wins ties. Invalid configuration is rejected.
-
-The standalone Python API evaluates policies without executing tools:
-
-```python
-from agentguard.policy import evaluate, load_policy
-
-policy = load_policy("examples/agentguard.yaml")
-decision = evaluate(policy, "filesystem.read_file")
-print(decision.model_dump(mode="json"))
-```
-
-The proxy waits for an explicit local decision on `approve` calls. Review requests
-from a separate trusted terminal using `agentguard approvals list`,
-`agentguard approvals show <request-id>`, and `agentguard approvals approve <request-id>`
-or `reject <request-id>`. Approvals expire and can be consumed only once.
-See [the approval workflow](docs/APPROVAL_WORKFLOW.md) for a working example and
-the same-UID trust boundary, and [audit logging](docs/AUDIT_LOGGING.md) for storage,
-privacy, and uncertain execution outcomes. State defaults to `~/.local/state/agentguard`;
-use `--state-dir` for a different private location. POSIX filesystem protection
-and FIFOs are required for this release.
-
-## Security boundary
-The gateway only controls tool calls actually routed through it. It is not a sandbox, a substitute for least-privilege credentials, or a guarantee against compromised upstream servers. Only stdio transport is implemented.
-
-## Community
-See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
-
-## License
-Apache-2.0. Copyright 2026 Belfeki.tn.
+Copyright 2026 **Belfeki.tn**. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
